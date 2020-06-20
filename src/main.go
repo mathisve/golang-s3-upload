@@ -2,6 +2,7 @@ package main
 
 import (
   "fmt"
+  "html/template"
   "net/http"
   "math/rand"
   "strconv"
@@ -9,7 +10,7 @@ import (
 
   "github.com/aws/aws-sdk-go/aws"
   "github.com/aws/aws-sdk-go/aws/session"
-  //"github.com/aws/aws-sdk-go/service/s3"
+  "github.com/aws/aws-sdk-go/service/s3"
   "github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
@@ -18,17 +19,36 @@ const (
   port = "8080"
 
   aws_region = "eu-central-1"
-  aws_bucket = "golang-s3-uploader"
 )
 
-var sess = awsconnect()
+var (
+   sess = awsConnectRegion("")
+   svc = gets3client()
+   sessions = make(map[string]*session.Session)
+)
+
+type IndexPageData struct {
+  Buckets []Bucket
+}
+
+type Bucket struct {
+  Name string
+}
 
 func index(w http.ResponseWriter, r* http.Request) {
-  http.ServeFile(w, r, "static/index.html")
+  tmpl := template.Must(template.ParseFiles("static/index.html"))
+
+  data := IndexPageData{
+    Buckets: getBuckets(),
+  }
+
+  tmpl.Execute(w, data)
 }
 
 func upload(w http.ResponseWriter, r* http.Request) {
-  r.ParseMultipartForm(30 << 20)
+  r.ParseMultipartForm(128 << 20)
+
+  bucket := r.Form["bucket"][0]
 
   file, handler, err := r.FormFile("file")
   if err != nil {
@@ -36,23 +56,76 @@ func upload(w http.ResponseWriter, r* http.Request) {
     w.WriteHeader(http.StatusInternalServerError)
     return
   }
+
   defer file.Close()
 
-  fmt.Printf("UploadingFile: %+v\n", handler.Filename)
+  fmt.Printf("UploadingFile: %+v to %+v\n", handler.Filename, bucket)
 
-  uploader := s3manager.NewUploader(sess)
+  //get region of bucket
+  url := fmt.Sprintf("https://%s.s3.amazonaws.com", bucket)
+  res, err := http.Head(url)
+  if err != nil {
+     panic(err)
+  }
+  region := res.Header.Get("X-Amz-Bucket-Region")
+
+  if err != nil {
+    panic(err)
+    w.WriteHeader(http.StatusInternalServerError)
+    return
+  }
+
+  uploader := s3manager.NewUploader(awsConnectRegion(region))
   _, err = uploader.Upload(&s3manager.UploadInput{
-    Bucket: aws.String(aws_bucket),
+    Bucket: aws.String(bucket),
     Key:    aws.String(strconv.Itoa(rand.Int())[:5]+handler.Filename),
     Body:   file,
     ACL: aws.String("public-read"),
   })
   if err != nil {
     panic(err)
+    w.WriteHeader(http.StatusInternalServerError)
     return
   }
 }
 
+func awsConnectRegion(region string) *session.Session {
+  if region == "" {
+    region = "eu-central-1"
+  }
+
+  if val, ok := sessions[region]; ok {
+    return val
+  } else {
+    sess, err := session.NewSession(
+      &aws.Config{
+        Region: aws.String(region),
+      },
+    )
+    if err != nil {
+      panic(err)
+    }
+    sessions[region] = sess
+    return sess
+  }
+}
+
+func gets3client() *s3.S3 {
+  return s3.New(sess)
+}
+
+func getBuckets() (b []Bucket) {
+  result, err := svc.ListBuckets(&s3.ListBucketsInput{})
+  if err != nil {
+    panic(err)
+  }
+
+  for _, bucket := range(result.Buckets) {
+    b = append(b, Bucket {Name: *bucket.Name})
+  }
+
+  return b
+}
 
 func router() {
   router := mux.NewRouter()
@@ -64,18 +137,6 @@ func router() {
   if err != nil {
     panic(err)
   }
-}
-
-func awsconnect() *session.Session {
-  sess, err := session.NewSession(
-    &aws.Config{
-      Region: aws.String(aws_region),
-    },
-  )
-  if err != nil {
-    panic(err)
-  }
-  return sess
 }
 
 func main() {
