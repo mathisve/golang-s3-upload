@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <script type="text/javascript" src="static/js/upload.js"></script>
+    <script type="text/javascript" src="static/js/getBucketObjects.js"></script>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css" integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+  </head>
+  <body onload="javascript:getBucketObjects();" >
+    <center>
+      <h2> Upload to s3 buckets!<h2>
+    </center>
+    <div class="container">
+        <div class="row">
+          <form action="javascript:uploadFile();" method="POST">
+            <div class="col">
+              <input type="file" id="file" multiple/>
+            </div>
+            <div class="col">
+              <select id="bucket" onchange="javascript:getBucketObjects();">
+                {{range .Buckets}}
+                <option value="{{.Name}}"> {{.Name}}</option>
+                {{ end }}
+              </select>
+            </div>
+            <div class="col">
+              <input type="submit" value="Upload!"/>
+            </div>
+          </form>
+        </div>
+      <table id="table">
+      </table>
+    </div>
+  </body>
+</html>
