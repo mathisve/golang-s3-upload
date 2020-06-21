@@ -5,6 +5,7 @@ import (
   "html/template"
   "net/http"
   "math/rand"
+  "encoding/json"
   "strconv"
   "github.com/gorilla/mux"
 
@@ -22,9 +23,8 @@ const (
 )
 
 var (
-   sess = awsConnectRegion("")
-   svc = gets3client()
    sessions = make(map[string]*session.Session)
+   s3sessions = make(map[string]*s3.S3)
 )
 
 type IndexPageData struct {
@@ -33,6 +33,11 @@ type IndexPageData struct {
 
 type Bucket struct {
   Name string
+}
+
+type BucketObject struct {
+  Name string
+  Size int64
 }
 
 func index(w http.ResponseWriter, r* http.Request) {
@@ -61,20 +66,13 @@ func upload(w http.ResponseWriter, r* http.Request) {
 
   fmt.Printf("UploadingFile: %+v to %+v\n", handler.Filename, bucket)
 
-  //get region of bucket
-  url := fmt.Sprintf("https://%s.s3.amazonaws.com", bucket)
-  res, err := http.Head(url)
   if err != nil {
-     panic(err)
-  }
-  region := res.Header.Get("X-Amz-Bucket-Region")
-
-  if err != nil {
-    panic(err)
+    fmt.Println(err)
     w.WriteHeader(http.StatusInternalServerError)
     return
   }
 
+  region := getBucketRegion(bucket)
   uploader := s3manager.NewUploader(awsConnectRegion(region))
   _, err = uploader.Upload(&s3manager.UploadInput{
     Bucket: aws.String(bucket),
@@ -83,15 +81,23 @@ func upload(w http.ResponseWriter, r* http.Request) {
     ACL: aws.String("public-read"),
   })
   if err != nil {
-    panic(err)
+    fmt.Println(err)
     w.WriteHeader(http.StatusInternalServerError)
     return
   }
 }
 
+func getBucketObjects(w http.ResponseWriter, r* http.Request) {
+    r.ParseMultipartForm(128 << 20)
+
+    bucket := r.Form["bucket"][0]
+    bo := listBucketItems(bucket)
+    json.NewEncoder(w).Encode(bo)
+}
+
 func awsConnectRegion(region string) *session.Session {
   if region == "" {
-    region = "eu-central-1"
+    region = aws_region
   }
 
   if val, ok := sessions[region]; ok {
@@ -103,28 +109,68 @@ func awsConnectRegion(region string) *session.Session {
       },
     )
     if err != nil {
-      panic(err)
+      fmt.Println(err)
     }
     sessions[region] = sess
     return sess
   }
 }
 
-func gets3client() *s3.S3 {
-  return s3.New(sess)
+func gets3clientRegion(region string) *s3.S3 {
+  if region == "" {
+    region = aws_region
+  }
+
+  if val, ok := s3sessions[region]; ok {
+    return val
+  } else {
+    s := s3.New(awsConnectRegion(region))
+    s3sessions[region] = s
+    return s
+  }
 }
 
 func getBuckets() (b []Bucket) {
-  result, err := svc.ListBuckets(&s3.ListBucketsInput{})
+  result, err := gets3clientRegion("").ListBuckets(&s3.ListBucketsInput{})
   if err != nil {
-    panic(err)
+    fmt.Println(err)
   }
 
   for _, bucket := range(result.Buckets) {
-    b = append(b, Bucket {Name: *bucket.Name})
+    b = append(b, Bucket {
+      Name: *bucket.Name,
+    })
   }
 
   return b
+}
+
+func getBucketRegion(bucket string) (region string){
+  url := fmt.Sprintf("https://%s.s3.amazonaws.com", bucket)
+  res, err := http.Head(url)
+  if err != nil {
+     fmt.Println(err)
+  }
+  return res.Header.Get("X-Amz-Bucket-Region")
+}
+
+func listBucketItems(bucket string) (bo []BucketObject) {
+  region := getBucketRegion(bucket)
+  resp, err := gets3clientRegion(region).ListObjectsV2(&s3.ListObjectsV2Input {
+    Bucket: aws.String(bucket),
+  })
+  if err != nil {
+    fmt.Println(err)
+  }
+
+  for _, object := range(resp.Contents) {
+    bo = append(bo, BucketObject{
+      Name: *object.Key,
+      Size: *object.Size,
+    })
+  }
+
+  return bo
 }
 
 func router() {
@@ -133,13 +179,16 @@ func router() {
 
   router.HandleFunc("/", index).Methods("GET")
   router.HandleFunc("/upload", upload).Methods("POST")
-  err := http.ListenAndServe(":"+port, router)
+  router.HandleFunc("/getBucketObjects", getBucketObjects).Methods("POST")
+
+  err := http.ListenAndServe(":" + port, router)
   if err != nil {
     panic(err)
   }
 }
 
 func main() {
-  fmt.Println("Server online!")
+  fmt.Println("localhost:" + port)
+
   router()
 }
