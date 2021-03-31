@@ -1,25 +1,27 @@
 package main
 
 import (
-  "fmt"
-  "html/template"
-  "net/http"
-  "math/rand"
   "encoding/json"
-  "strconv"
+  "fmt"
   "github.com/gorilla/mux"
+  "html/template"
+  "log"
+  "net/http"
+  url2 "net/url"
 
   "github.com/aws/aws-sdk-go/aws"
+  "github.com/aws/aws-sdk-go/aws/awserr"
   "github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/service/s3"
   "github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
 const (
-	staticDir = "/static"
-  port = "8080"
+  staticDir = "/static"
+  localhost = "127.0.0.1"
+  port = "80"
 
-  aws_region = "eu-central-1"
+  awsRegion = "eu-central-1"
 )
 
 var (
@@ -47,48 +49,57 @@ func index(w http.ResponseWriter, r* http.Request) {
     Buckets: getBuckets(),
   }
 
-  tmpl.Execute(w, data)
+  err := tmpl.Execute(w, data)
+  if err != nil {
+    log.Println(err)
+  }
 }
 
 func upload(w http.ResponseWriter, r* http.Request) {
-  r.ParseMultipartForm(128 << 20)
+  err := r.ParseMultipartForm(128 << 20)
+  if err != nil {
+    log.Println(err)
+  }
 
   bucket := r.Form["bucket"][0]
 
   file, handler, err := r.FormFile("file")
   if err != nil {
-    fmt.Println(err)
+    log.Println(err)
     w.WriteHeader(http.StatusInternalServerError)
     return
   }
 
   defer file.Close()
 
-  fmt.Printf("UploadingFile: %+v to %+v\n", handler.Filename, bucket)
-
-  if err != nil {
-    fmt.Println(err)
-    w.WriteHeader(http.StatusInternalServerError)
-    return
-  }
+  log.Printf("UploadingFile: %+v to %+v\n", handler.Filename, bucket)
 
   region := getBucketRegion(bucket)
   uploader := s3manager.NewUploader(awsConnectRegion(region))
   _, err = uploader.Upload(&s3manager.UploadInput{
     Bucket: aws.String(bucket),
-    Key:    aws.String(strconv.Itoa(rand.Int())[:5]+handler.Filename),
+    Key:    aws.String(handler.Filename),
     Body:   file,
-    ACL: aws.String("public-read"),
   })
   if err != nil {
-    fmt.Println(err)
+    if awsErr, ok := err.(awserr.Error); ok {
+      log.Println(awsErr)
+    } else {
+      log.Println(err)
+    }
+
     w.WriteHeader(http.StatusInternalServerError)
     return
   }
+
+  log.Printf("Upload of file %v done!\n", handler.Filename)
 }
 
 func getBucketObjects(w http.ResponseWriter, r* http.Request) {
-    r.ParseMultipartForm(128 << 20)
+    err := r.ParseMultipartForm(128 << 20)
+    if err != nil {
+      log.Println(err)
+    }
 
     bucket := r.Form["bucket"][0]
     bo := listBucketItems(bucket)
@@ -97,7 +108,7 @@ func getBucketObjects(w http.ResponseWriter, r* http.Request) {
 
 func awsConnectRegion(region string) *session.Session {
   if region == "" {
-    region = aws_region
+    region = awsRegion
   }
 
   if val, ok := sessions[region]; ok {
@@ -109,7 +120,7 @@ func awsConnectRegion(region string) *session.Session {
       },
     )
     if err != nil {
-      fmt.Println(err)
+      log.Println(err)
     }
     sessions[region] = sess
     return sess
@@ -118,7 +129,7 @@ func awsConnectRegion(region string) *session.Session {
 
 func gets3clientRegion(region string) *s3.S3 {
   if region == "" {
-    region = aws_region
+    region = awsRegion
   }
 
   if val, ok := s3sessions[region]; ok {
@@ -133,10 +144,10 @@ func gets3clientRegion(region string) *s3.S3 {
 func getBuckets() (b []Bucket) {
   result, err := gets3clientRegion("").ListBuckets(&s3.ListBucketsInput{})
   if err != nil {
-    fmt.Println(err)
+    log.Println(err)
   }
 
-  for _, bucket := range(result.Buckets) {
+  for _, bucket := range result.Buckets {
     b = append(b, Bucket {
       Name: *bucket.Name,
     })
@@ -146,10 +157,10 @@ func getBuckets() (b []Bucket) {
 }
 
 func getBucketRegion(bucket string) (region string){
-  url := fmt.Sprintf("https://%s.s3.amazonaws.com", bucket)
+  url := fmt.Sprintf("https://%s.s3.amazonaws.com", url2.QueryEscape(bucket))
   res, err := http.Head(url)
   if err != nil {
-     fmt.Println(err)
+     log.Println(err)
   }
   return res.Header.Get("X-Amz-Bucket-Region")
 }
@@ -160,10 +171,10 @@ func listBucketItems(bucket string) (bo []BucketObject) {
     Bucket: aws.String(bucket),
   })
   if err != nil {
-    fmt.Println(err)
+    log.Println(err)
   }
 
-  for _, object := range(resp.Contents) {
+  for _, object := range resp.Contents {
     bo = append(bo, BucketObject{
       Name: *object.Key,
       Size: *object.Size,
@@ -181,6 +192,8 @@ func router() {
   router.HandleFunc("/upload", upload).Methods("POST")
   router.HandleFunc("/getBucketObjects", getBucketObjects).Methods("POST")
 
+  log.Printf("Now live on http://%v:%v", localhost, port)
+
   err := http.ListenAndServe(":" + port, router)
   if err != nil {
     panic(err)
@@ -188,7 +201,5 @@ func router() {
 }
 
 func main() {
-  fmt.Println("localhost:" + port)
-
   router()
 }
