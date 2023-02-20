@@ -14,4 +14,4 @@ Then run it
 
 ### Use pre-built  container
 
-`docker run -it -p 80:80 -e AWS_ACCESS_KEY_ID={YOUR ID} -e AWS_SECRET_ACCESS_KEY={YOUR KEY} mathisco/s3upload`
+`docker run -it -p 80:80 -e AWS_ACCESS_KEY_ID={YOUR ID} -e AWS_SECRET_ACCESS_KEY={YOUR KEY} mathisve/s3upload`
