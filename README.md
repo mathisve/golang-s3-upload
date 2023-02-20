@@ -1,3 +1,5 @@
+[![Dockerhub](https://github.com/mathisve/golang-s3-upload/actions/workflows/dockerpush.yaml/badge.svg)](https://github.com/mathisve/golang-s3-upload/actions/workflows/dockerpush.yaml)
+
 # golang-s3-upload
 Simple web tool to upload files to s3 buckets in bulk.
 
